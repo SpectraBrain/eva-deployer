@@ -184,8 +184,19 @@ fi
 # 새로 필요한 경로를 위해, 가능하면 미리 만들어 둡니다 (이미 있으면 409 로 조용히 넘어감).
 ensure_harbor_project() {
   local project="$1" code
-  [[ -z "${REPOSITORY_PASSWORD:-}" ]] && return 0
   [[ "$project" == "library" ]] && return 0
+
+  # login_repository() 는 기존 docker 자격증명이 있으면 harbor.yml 을 읽지 않고 끝냅니다.
+  # 그 경로로 왔으면 여기서 비밀번호를 채워야 API 호출이 됩니다 — 없으면 project 를 못 만들고
+  # push 가 401 로 실패합니다.
+  if [[ -z "${REPOSITORY_PASSWORD:-}" && "$REPOSITORY_REGISTRY" == "localhost:32080" ]]; then
+    REPOSITORY_PASSWORD="$(read_local_harbor_password)"
+  fi
+  if [[ -z "${REPOSITORY_PASSWORD:-}" ]]; then
+    echo "[warn] Harbor 비밀번호를 몰라 project 확인을 건너뜁니다: $project"
+    echo "       REPOSITORY_PASSWORD 또는 HARBOR_ADMIN_PASSWORD 를 지정하세요."
+    return 0
+  fi
   code="$(curl -s -o /dev/null -w '%{http_code}' \
     -u "${REPOSITORY_USERNAME}:${REPOSITORY_PASSWORD}" \
     -X POST "http://${REPOSITORY_REGISTRY}/api/v2.0/projects" \
