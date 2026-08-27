@@ -22,6 +22,7 @@ else
 fi
 
 EVA_AGENT_RELEASE="${EVA_AGENT_RELEASE:?missing EVA_AGENT_RELEASE (set in versions.json)}"
+EVA_AGENT_QDRANT_VALUES_FILE="${EVA_AGENT_QDRANT_VALUES_FILE:-values-k3s.yaml}"
 EVA_APP_CHART_VERSION="${EVA_APP_CHART_VERSION:?missing EVA_APP_CHART_VERSION (set in versions.json)}"
 EVA_VISION_CHART_VERSION="${EVA_VISION_CHART_VERSION:?missing EVA_VISION_CHART_VERSION (set in versions.json)}"
 EVA_AGENT_CHART_VERSION="${EVA_AGENT_CHART_VERSION:?missing EVA_AGENT_CHART_VERSION (set in versions.json)}"
@@ -31,6 +32,7 @@ QDRANT_CHART_VERSION="${QDRANT_CHART_VERSION:?missing QDRANT_CHART_VERSION (set 
 EVA_IAM_CHART_VERSION="${EVA_IAM_CHART_VERSION:?missing EVA_IAM_CHART_VERSION (set in versions.json)}"
 KUSTOMIZE_VERSION="${KUSTOMIZE_VERSION:?missing KUSTOMIZE_VERSION (set in versions.json)}"
 K3S_DEFAULT_VERSION="${K3S_DEFAULT_VERSION:?missing K3S_DEFAULT_VERSION (set in versions.json)}"
+ORAS_VERSION="${ORAS_VERSION:-1.3.3}"
 
 mkdir -p "$BASE_DIR"/{aws,apt,docker,nvidia,cuda,helm,k3s,k8s,nfs,eva-app,eva-vision,eva-agent,eva-iam,qdrant,tools,images}
 mkdir -p "$BASE_DIR/docker/debs"
@@ -66,38 +68,6 @@ download_deb_packages() {
     cd "$output_dir"
     "${SUDO_CMD[@]}" apt-get download "$@"
   )
-}
-
-download_version_locked_system_packages() {
-  local output_dir="$1"
-  local -a packages=(
-    systemd
-    systemd-dev
-    systemd-sysv
-    systemd-resolved
-    systemd-timesyncd
-    systemd-oomd
-    udev
-    libsystemd-shared
-    libsystemd0
-    libudev1
-    libnss-systemd
-    libpam-systemd
-  )
-  local -a available_packages=()
-  local package
-
-  for package in "${packages[@]}"; do
-    if apt-cache "${APT_CACHE_OPTIONS[@]}" policy "$package" \
-      | awk '/Candidate:/ { exit $2 == "(none)" }'; then
-      available_packages+=("$package")
-    fi
-  done
-
-  if [[ ${#available_packages[@]} -gt 0 ]]; then
-    echo "[info] downloading version-locked system package set: ${#available_packages[@]} packages"
-    download_deb_packages "$output_dir" "${available_packages[@]}"
-  fi
 }
 
 resolve_deb_packages() {
@@ -251,10 +221,27 @@ if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
     nfs-common
     keyutils
   )
+  BASE_EXCLUDED_PACKAGES=(
+    systemd
+    systemd-dev
+    systemd-sysv
+    systemd-resolved
+    systemd-timesyncd
+    systemd-oomd
+    udev
+    libsystemd-shared
+    libsystemd0
+    libudev1
+    libnss-systemd
+    libpam-systemd
+    dpkg
+    libc6
+  )
   find "$BASE_DIR/apt/debs" -maxdepth 1 -type f -name '*.deb' -delete
   BASE_DEPENDENCIES="$(resolve_deb_packages "${BASE_PACKAGES[@]}")"
   mapfile -t BASE_DOWNLOAD_PACKAGES < <(
-    printf '%s\n' "$BASE_DEPENDENCIES"
+    printf '%s\n' "$BASE_DEPENDENCIES" \
+      | grep -F -x -v -f <(printf '%s\n' "${BASE_EXCLUDED_PACKAGES[@]}")
   )
   if [[ ${#BASE_DOWNLOAD_PACKAGES[@]} -eq 0 ]]; then
     echo "[ERROR] could not resolve base/NFS package dependencies from apt." >&2
@@ -262,10 +249,6 @@ if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
   fi
   echo "[info] downloading base/NFS packages and dependencies: ${#BASE_DOWNLOAD_PACKAGES[@]} packages"
   download_deb_packages "$BASE_DIR/apt/debs" "${BASE_DOWNLOAD_PACKAGES[@]}"
-  # Packages such as systemd require an exact matching libsystemd0 version.
-  # Include the full systemd lockstep set even when it is already installed on
-  # the preparation host, because the airgap host can be one patch level behind.
-  download_version_locked_system_packages "$BASE_DIR/apt/debs"
   rm -rf "$BASE_DIR/apt/debs/partial" "$BASE_DIR/apt/debs/lock"
   find "$BASE_DIR/apt/debs" -maxdepth 1 -type f -name '*.deb' -print \
     | sort > "$BASE_DIR/apt/debs/manifest.txt"
@@ -378,10 +361,11 @@ fetch "https://github.com/qdrant/qdrant-helm/releases/download/qdrant-${QDRANT_C
 
 # EVA Agent release values/templates/scripts
 AGENT_RELEASE_BASE="https://raw.githubusercontent.com/mellerikat/eva-agent/chartmuseum/release/${EVA_AGENT_RELEASE}"
+EVA_AGENT_QDRANT_VALUES_URL="${EVA_AGENT_QDRANT_VALUES_URL:-${AGENT_RELEASE_BASE}/eva-agent-qdrant/${EVA_AGENT_QDRANT_VALUES_FILE}}"
 fetch "${AGENT_RELEASE_BASE}/eva-agent/values-k3s.yaml" "$BASE_DIR/eva-agent/release/${EVA_AGENT_RELEASE}/eva-agent/values-k3s.yaml"
 fetch "${AGENT_RELEASE_BASE}/eva-agent/values-secret.yaml" "$BASE_DIR/eva-agent/release/${EVA_AGENT_RELEASE}/eva-agent/values-secret.yaml"
 fetch "${AGENT_RELEASE_BASE}/eva-agent-init/values-k3s.yaml" "$BASE_DIR/eva-agent/release/${EVA_AGENT_RELEASE}/eva-agent-init/values-k3s.yaml"
-fetch "${AGENT_RELEASE_BASE}/eva-agent-qdrant/values-k3s.yaml" "$BASE_DIR/eva-agent/release/${EVA_AGENT_RELEASE}/eva-agent-qdrant/values-k3s.yaml"
+fetch "${EVA_AGENT_QDRANT_VALUES_URL}" "$BASE_DIR/eva-agent/release/${EVA_AGENT_RELEASE}/eva-agent-qdrant/${EVA_AGENT_QDRANT_VALUES_FILE}"
 
 # Download all supported k3s GPU profile values for eva-agent-vllm
 VLLM_K3S_VALUES_FILES=(
@@ -404,6 +388,18 @@ KUSTOMIZE_ARCHIVE="kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
 fetch "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/${KUSTOMIZE_ARCHIVE}" "$BASE_DIR/tools/${KUSTOMIZE_ARCHIVE}"
 tar -xzf "$BASE_DIR/tools/${KUSTOMIZE_ARCHIVE}" -C "$BASE_DIR/tools"
 chmod +x "$BASE_DIR/tools/kustomize"
+
+# ORAS is used on the Airgap server to seed Qdrant snapshot OCI artifacts into
+# Local Harbor.  The snapshot-sync container carries the same client for pod-side pulls.
+case "$(uname -m)" in
+  x86_64|amd64) ORAS_ARCH=amd64 ;;
+  aarch64|arm64) ORAS_ARCH=arm64 ;;
+  *) echo "[ERROR] unsupported architecture for ORAS: $(uname -m)" >&2; exit 1 ;;
+esac
+ORAS_ARCHIVE="oras_${ORAS_VERSION}_linux_${ORAS_ARCH}.tar.gz"
+fetch "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/${ORAS_ARCHIVE}" "$BASE_DIR/tools/${ORAS_ARCHIVE}"
+tar -xzf "$BASE_DIR/tools/${ORAS_ARCHIVE}" -C "$BASE_DIR/tools" oras
+chmod +x "$BASE_DIR/tools/oras"
 
 # Optional: build NVIDIA driver offline apt repo
 if [[ "${DOWNLOAD_NVIDIA_DRIVER_REPO:-true}" == "true" ]]; then
