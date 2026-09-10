@@ -128,6 +128,7 @@
 
 - name: Install base packages online
   ansible.builtin.apt:
+
     name: "{{ base_required_packages }}"
     state: present
     update_cache: true
