@@ -608,6 +608,25 @@ kubectl logs -n eva-agent statefulset/eva-agent-qdrant -c qdrant-snapshot-sync
 
 ## 2. Inventory
 
+cloud_repository 모드 설치:
+
+inventory.ini
+```ini
+[all]
+localhost ansible_connection=local ansible_become_password=<sudo 비밀번호>
+
+[all:vars]
+repository_mode=cloud_repository
+```
+
+aws_key.ini
+```ini
+aws_access_key_id = <YOUR_ACCESS_KEY>
+aws_secret_access_key = <YOUR_SECRET_KEY>
+region = ap-northeast-2
+```
+
+
 원격 서버 설치:
 
 ```ini
@@ -965,7 +984,7 @@ EOF
 사전 확인
 
 ```bash
-ls -ld /home/.aws
+ls -ld /home/home/.aws
 ls -ld /home/eva/certs
 ```
 
@@ -975,6 +994,7 @@ eva_iam_host: 실제 사용할 host url (IP or DNS)
 eva_iam_ingress_path: 주소 뒤 구분 path
 eva_iam_app_redirect_uris: eva-app에서 사용할 https url + /*
 
+**설치 시 BECOME password는 sudo 비밀번호입니다.** 
 
 ```bash
 ansible-playbook -i 'localhost,' -c local site_eva_iam.yaml -K \
@@ -1005,6 +1025,11 @@ ansible-playbook -i 'localhost,' -c local site_eva_app.yaml -K \
 
 ## 5. EVA Vision Secret 생성
 
+네임스페이스가 없는 경우 아래 명령어 실행
+```bash
+kubectl create namespace eva-visionkubectl create namespace eva-vision
+```
+
 ```bash
 ECR_PASSWORD=$(aws ecr get-login-password --region ap-northeast-2)
 
@@ -1017,6 +1042,10 @@ kubectl create secret docker-registry eva-vision-regcred \
 
 ## 6. EVA Agent Secret 생성
 
+네임스페이스가 없는 경우 아래 명령어 실행
+```bash
+kubectl create namespace eva-visionkubectl create namespace eva-agent
+```
 ```bash
 ECR_PASSWORD=$(aws ecr get-login-password --region ap-northeast-2)
 
@@ -1051,6 +1080,8 @@ ANSIBLE_LOG_PATH=logs_eva/ansible-internal.log \
   -e repository_mode=cloud_repository \
   -vvv 2>&1 | tee logs_eva/ansible-run-eva.log
 ```
+kustomize 패키지 설치 시 에러 발생하는 경우, 수동 설치 후 명령어 실행 sudo ln -s /snap/bin/kustomize /usr/local/bin/kustomize 다음 재설치
+
 
 ### [remote_repository]
 
