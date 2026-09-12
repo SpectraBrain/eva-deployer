@@ -17,7 +17,7 @@
 
 - name: Find base and NFS offline packages
   ansible.builtin.find:
-    paths: "{{ playbook_dir }}/install/apt/debs"
+    paths: "{{ (eva_install_root | default((eva_repo_root | default(playbook_dir)) ~ '/install')) ~ '/apt/debs' }}"
     patterns: "*.deb"
     file_type: file
   register: base_offline_packages
@@ -37,8 +37,8 @@
 - name: Install base and NFS packages from offline bundle
   ansible.builtin.command:
     cmd: >-
-      /bin/bash {{ playbook_dir }}/install/validate_offline_debs.sh
-      {{ playbook_dir }}/install/apt/debs
+      /bin/bash {{ (eva_install_root | default((eva_repo_root | default(playbook_dir)) ~ '/install')) ~ '/validate_offline_debs.sh' }}
+      {{ (eva_install_root | default((eva_repo_root | default(playbook_dir)) ~ '/install')) ~ '/apt/debs' }}
   changed_when: false
   when:
     - airgap_mode | default(false) | bool
@@ -50,7 +50,7 @@
   # 통째로 무시되고 libc6 / systemd 까지 설치 대상에 들어갑니다.
   ansible.builtin.shell: |
     set -uo pipefail
-    debs_dir="{{ playbook_dir }}/install/apt/debs"
+    debs_dir="{{ (eva_install_root | default((eva_repo_root | default(playbook_dir)) ~ '/install')) ~ '/apt/debs' }}"
 
     # 실행 중인 시스템을 깨뜨릴 수 있는 패키지는 번들에 있어도 건드리지 않습니다.
     mapfile -d '' base_offline_debs < <(
